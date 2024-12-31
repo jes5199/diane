@@ -1,8 +1,8 @@
 from Cocoa import (
     NSApplication, NSObject,
     NSStatusBar, NSVariableStatusItemLength,
-    NSMenu, NSMenuItem, NSApp,
-    NSUserNotification, NSUserNotificationCenter
+    NSMenu, NSMenuItem, NSRect,
+    NSView, NSApp
 )
 import objc
 import subprocess
@@ -11,37 +11,89 @@ from datetime import datetime
 import threading
 from openai import OpenAI
 
+# --------------------
+# Custom NSView
+# --------------------
+import sys
+from Cocoa import (
+    NSColor, NSFont, NSAttributedString,
+    NSFontAttributeName, NSForegroundColorAttributeName
+)
+
+class StatusView(NSView):
+    def initWithFrame_(self, frame):
+        self = objc.super(StatusView, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        
+        self.title = " ● "  # default text
+        self.delegate = None  # We'll set this to our AppDelegate
+        return self
+
+    def drawRect_(self, rect):
+        """Draw the title string in the center of the view."""
+        objc.super(StatusView, self).drawRect_(rect)
+
+        attributes = {
+            NSFontAttributeName: NSFont.systemFontOfSize_(13),
+            NSForegroundColorAttributeName: NSColor.labelColor()
+        }
+        attr_str = NSAttributedString.alloc().initWithString_attributes_(
+            self.title,
+            attributes
+        )
+
+        str_size = attr_str.size()
+        view_width, view_height = self.bounds().size.width, self.bounds().size.height
+        x = (view_width - str_size.width) / 2
+        y = (view_height - str_size.height) / 2
+
+        attr_str.drawAtPoint_((x, y))
+
+    # Left mouse click => toggle recording
+    def mouseDown_(self, event):
+        if self.delegate:
+            self.delegate.toggleRecording()
+
+    # Right mouse click => show menu
+    def rightMouseDown_(self, event):
+        if self.delegate and self.delegate.menu:
+            self.delegate.statusitem.popUpStatusItemMenu_(self.delegate.menu)
+
+# --------------------
+# AppDelegate
+# --------------------
 class AppDelegate(NSObject):
     def init(self):
-        """Initialize the app delegate, create the status item, set up menu, 
-        and prepare for recording and transcription."""
         self = objc.super(AppDelegate, self).init()
         if self is None:
             return None
 
-        # Initialize state variables
+        # State
         self.recording = False
         self.recording_process = None
         self._current_recording = None
+
+        # Output + OpenAI
         self.output_dir = os.path.expanduser("~/Documents/AudioNotes")
         self.obsidian_vault = os.path.expanduser("~/Documents/projects/")
-        self.client = OpenAI()  # Initialize OpenAI client (adjust as needed)
+        self.client = OpenAI()
 
-        # Create necessary directories
-        for directory in [self.output_dir, self.obsidian_vault]:
-            if not os.path.exists(directory):
-                os.makedirs(directory)
+        for d in [self.output_dir, self.obsidian_vault]:
+            os.makedirs(d, exist_ok=True)
 
-        # Create Status Item
+        # Create the status item
         statusbar = NSStatusBar.systemStatusBar()
         self.statusitem = statusbar.statusItemWithLength_(NSVariableStatusItemLength)
 
-        # Set initial title
-        self.statusitem.setTitle_(" ● ")
-        self.statusitem.setAction_("statusItemClicked:")
-        self.statusitem.setTarget_(self)
+        # Create the custom view
+        # Typically ~24–28 wide for the status bar
+        frame = ((0, 0), (28, 24))
+        self.view = StatusView.alloc().initWithFrame_(frame)
+        self.view.delegate = self  # so it can call our toggleRecording, etc.
+        self.statusitem.setView_(self.view)
 
-        # Create menu
+        # Create a simple menu for right-click
         self.menu = NSMenu.alloc().init()
         quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "Quit", "terminate:", ""
@@ -50,97 +102,62 @@ class AppDelegate(NSObject):
 
         return self
 
-    def statusItemClicked_(self, sender):
-        """Handle status item clicks (left-click toggles recording, right-click opens menu)."""
-        event = NSApp.currentEvent()
-        if event.type() == 3:  # Right mouse down
-            # Show the menu at the status item location
-            self.statusitem.popUpStatusItemMenu_(self.menu)
+    @objc.python_method
+    def toggleRecording(self):
+        if not self.recording:
+            self.startRecording()
         else:
-            # Left click => toggle recording
-            if not self.recording:
-                self.startRecording()
-            else:
-                self.stopRecording()
+            self.stopRecording()
 
     @objc.python_method
     def startRecording(self):
-        """Start audio recording and update status item."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._current_recording = os.path.join(self.output_dir, f"recording_{timestamp}.wav")
 
-        # Start sox recording
         self.recording_process = subprocess.Popen([
             "sox", "-d", self._current_recording,
         ])
-
         self.recording = True
-        self.statusitem.setTitle_("[ ● ]")  # Show a recording indicator
+
+        # Update the label to show a recording indicator
+        self.view.title = "[ ● ]"
+        self.view.setNeedsDisplay_(True)
 
     @objc.python_method
     def stopRecording(self):
-        """Stop the recording process and queue transcription."""
         if self.recording_process:
             self.recording_process.terminate()
             self.recording_process.wait()
             self.recording_process = None
 
         self.recording = False
-        self.statusitem.setTitle_(" ● ")  # Revert the status item title
 
-        # Process the recording in a background thread
-        recording_path = self._current_recording
-        threading.Thread(target=self._process_recording, args=(recording_path,)).start()
+        # Revert the label
+        self.view.title = " ● "
+        self.view.setNeedsDisplay_(True)
+
+        # Process in background
+        threading.Thread(target=self._process_recording, args=(self._current_recording,)).start()
 
     @objc.python_method
-    def _process_recording(self, recording_path):
-        """Process the audio file using OpenAI's Whisper model."""
+    def _process_recording(self, path):
+        """Transcribe, then save markdown."""
         try:
-            with open(recording_path, "rb") as audio_file:
+            with open(path, "rb") as f:
                 transcription = self.client.audio.transcriptions.create(
                     model="whisper-1",
-                    file=audio_file
+                    file=f
                 )
 
-            # Create markdown content
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            markdown_content = f"""# Audio Note {timestamp}
-{transcription.text}
----
-Created: {timestamp}
-Source: Audio Recording
-"""
+            now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            md_fn = f"audio_note_{now_str}.md"
+            md_path = os.path.join(self.obsidian_vault, md_fn)
+            with open(md_path, "w") as md:
+                md.write(f"# Audio Note {now_str}\n{transcription.text}\n---\n")
 
-            # Save markdown file
-            md_filename = f"audio_note_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-            md_path = os.path.join(self.obsidian_vault, md_filename)
-            with open(md_path, 'w') as f:
-                f.write(markdown_content)
-
-            # Show success notification
-            self._show_notification(
-                'Transcription Complete',
-                'Audio note has been created',
-                f'Saved as {md_filename}'
-            )
-
+            print(f"Saved transcription to {md_fn}")
         except Exception as e:
-            # Show error notification
-            self._show_notification(
-                'Error',
-                'Failed to process recording',
-                str(e)
-            )
-
-    @objc.python_method
-    def _show_notification(self, title, subtitle, message):
-        """Show a user notification with the given title, subtitle, and message."""
-        notification = NSUserNotification.alloc().init()
-        notification.setTitle_(title)
-        notification.setSubtitle_(subtitle)
-        notification.setInformativeText_(message)
-
-        NSUserNotificationCenter.defaultUserNotificationCenter().deliverNotification_(notification)
+            print("Error processing:", e)
 
 def main():
     app = NSApplication.sharedApplication()
