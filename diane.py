@@ -7,44 +7,63 @@ from datetime import datetime
 import threading
 from openai import OpenAI
 from pathlib import Path
+from PyObjCTools import AppHelper
+
+def ensure_main_thread(func):
+    """Decorator to ensure a function is called on the main thread."""
+    def wrapper(*args, **kwargs):
+        AppHelper.callAfter(func, *args, **kwargs)
+    return wrapper
 
 class AppDelegate(NSObject):
     def init(self):
+        print("1. Starting init...")
         self = objc.super(AppDelegate, self).init()
-        if self is None: return None
+        print("2. Super init completed")
         
-        self.recording = False
-        self.recording_process = None
-        self.output_dir = os.path.expanduser("~/Documents/AudioNotes")
-        self.obsidian_vault = os.path.expanduser("~/Documents/projects/")
-        self._current_recording = None
+        if self is None:
+            print("ERROR: Super init returned None!")
+            return None
 
-        # Initialize OpenAI client
-        self.client = OpenAI()
+        try:
+            # Create a basic status item
+            print("3. Getting system status bar...")
+            statusbar = NSStatusBar.systemStatusBar()
+            print("4. System status bar obtained")
+            
+            print("5. Creating status item...")
+            self.statusitem = statusbar.statusItemWithLength_(NSVariableStatusItemLength)
+            print("6. Status item created")
+            
+            print("7. Setting status item title...")
+            self.statusitem.setTitle_("●")
+            print("8. Status item title set")
+            
+            # Attach a simple menu
+            print("9. Creating menu...")
+            self.menu = NSMenu.alloc().init()
+            print("10. Menu created")
+            
+            print("11. Creating quit menu item...")
+            quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Quit", "terminate:", "")
+            print("12. Quit menu item created")
+            
+            print("13. Adding quit item to menu...")
+            self.menu.addItem_(quit_item)
+            print("14. Quit item added")
+            
+            print("15. Setting menu to status item...")
+            self.statusitem.setMenu_(self.menu)
+            print("16. Menu set successfully")
 
-        # Create output directories
-        for directory in [self.output_dir, self.obsidian_vault]:
-            if not os.path.exists(directory):
-                os.makedirs(directory)
-
-        # Create status item
-        statusbar = NSStatusBar.systemStatusBar()
-        self.statusitem = statusbar.statusItemWithLength_(NSSquareStatusItemLength)
-        
-        # Create button
-        self.statusitem.button().setTitle_(" ● ")
-        
-        # Set up menu
-        self.menu = NSMenu.alloc().init()
-        menuitem = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Quit", "terminate:", "")
-        self.menu.addItem_(menuitem)
-        self.statusitem.setMenu_(self.menu)
-
-        # Set up click handling
-        self.statusitem.button().setAction_("handleClick:")
-        self.statusitem.button().setTarget_(self)
-
-        return self
+            print("17. Init completed successfully!")
+            return self
+            
+        except Exception as e:
+            print(f"ERROR during initialization: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
 
     def handleClick_(self, sender):
         if not self.recording:
@@ -63,7 +82,7 @@ class AppDelegate(NSObject):
         ])
         
         self.recording = True
-        self.statusitem.button().setTitle_("[ ● ]")
+        self.statusitem.setTitle_("[ ● ]")
 
     @objc.python_method
     def stopRecording(self):
@@ -73,7 +92,7 @@ class AppDelegate(NSObject):
             self.recording_process = None
         
         self.recording = False
-        self.statusitem.button().setTitle_(" ● ")
+        self.statusitem.setTitle_(" ● ")
         
         recording_path = self._current_recording
         threading.Thread(target=self._process_recording, args=(recording_path,)).start()
