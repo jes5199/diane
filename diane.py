@@ -8,17 +8,11 @@ from pathlib import Path
 
 class AudioRecorderApp(rumps.App):
     def __init__(self):
-        super().__init__("REC")
+        super().__init__("REC", quit_button=None)  # Remove default quit button
         self.recording = False
         self.recording_process = None
         self.output_dir = os.path.expanduser("~/Documents/AudioNotes")
         self.obsidian_vault = os.path.expanduser("~/Documents/ObsidianVault")  # Change this to your vault path
-        
-        # Add menu items
-        # Create menu with keyboard shortcut
-        self.menu = [
-            rumps.MenuItem("Toggle Recording (⌘⇧D)", key='D', callback=self.toggle_recording)
-        ]
         
         # Initialize OpenAI client
         self.client = OpenAI()  # Will use OPENAI_API_KEY environment variable
@@ -27,8 +21,14 @@ class AudioRecorderApp(rumps.App):
         for directory in [self.output_dir, self.obsidian_vault]:
             if not os.path.exists(directory):
                 os.makedirs(directory)
+                
+        # Add quit button to menu
+        self.menu = [
+            rumps.MenuItem("Quit", callback=lambda _: rumps.quit_application())
+        ]
 
-    def toggle_recording(self, _):
+    def on_clicked(self, _):
+        """Override the default click behavior"""
         if not self.recording:
             self.start_recording()
         else:
