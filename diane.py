@@ -1,5 +1,6 @@
 from Foundation import *
 from AppKit import *
+import objc
 import subprocess
 import os
 from datetime import datetime
@@ -7,13 +8,16 @@ import threading
 from openai import OpenAI
 from pathlib import Path
 
-class StatusBarController(NSObject):
+class AppDelegate(NSObject):
     def init(self):
-        self = super(StatusBarController, self).init()
+        self = objc.super(AppDelegate, self).init()
+        if self is None: return None
+        
         self.recording = False
         self.recording_process = None
         self.output_dir = os.path.expanduser("~/Documents/AudioNotes")
         self.obsidian_vault = os.path.expanduser("~/Documents/projects/")
+        self._current_recording = None
 
         # Initialize OpenAI client
         self.client = OpenAI()
@@ -23,40 +27,45 @@ class StatusBarController(NSObject):
             if not os.path.exists(directory):
                 os.makedirs(directory)
 
-        # Create the statusbar item
-        self.statusitem = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
+        # Create status item
+        statusbar = NSStatusBar.systemStatusBar()
+        self.statusitem = statusbar.statusItemWithLength_(NSSquareStatusItemLength)
         
-        # Set initial title
-        self.statusitem.setTitle_(" ● ")
+        # Create button
+        self.statusitem.button().setTitle_(" ● ")
         
-        # Create the menu (empty for now, just handle clicks)
+        # Set up menu
         self.menu = NSMenu.alloc().init()
-        
-        # Set target for click events
-        self.statusitem.setTarget_(self)
-        self.statusitem.setAction_('toggleRecording:')
+        menuitem = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Quit", "terminate:", "")
+        self.menu.addItem_(menuitem)
         self.statusitem.setMenu_(self.menu)
+
+        # Set up click handling
+        self.statusitem.button().setAction_("handleClick:")
+        self.statusitem.button().setTarget_(self)
 
         return self
 
-    def toggleRecording_(self, sender):
+    def handleClick_(self, sender):
         if not self.recording:
             self.startRecording()
         else:
             self.stopRecording()
 
+    @objc.python_method
     def startRecording(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.current_recording = os.path.join(self.output_dir, f"recording_{timestamp}.wav")
+        self._current_recording = os.path.join(self.output_dir, f"recording_{timestamp}.wav")
         
         # Start sox recording
         self.recording_process = subprocess.Popen([
-            "sox", "-d", self.current_recording,
+            "sox", "-d", self._current_recording,
         ])
         
         self.recording = True
-        self.statusitem.setTitle_("[ ● ]")
+        self.statusitem.button().setTitle_("[ ● ]")
 
+    @objc.python_method
     def stopRecording(self):
         if self.recording_process:
             self.recording_process.terminate()
@@ -64,12 +73,13 @@ class StatusBarController(NSObject):
             self.recording_process = None
         
         self.recording = False
-        self.statusitem.setTitle_(" ● ")
+        self.statusitem.button().setTitle_(" ● ")
         
-        # Process in background
-        threading.Thread(target=self.processRecording, args=(self.current_recording,)).start()
+        recording_path = self._current_recording
+        threading.Thread(target=self._process_recording, args=(recording_path,)).start()
 
-    def processRecording(self, recording_path):
+    @objc.python_method
+    def _process_recording(self, recording_path):
         try:
             # Transcribe
             with open(recording_path, "rb") as audio_file:
@@ -94,30 +104,28 @@ Source: Audio Recording
                 f.write(markdown_content)
             
             # Show notification
-            NSUserNotification = objc.lookUpClass('NSUserNotification')
-            NSUserNotificationCenter = objc.lookUpClass('NSUserNotificationCenter')
-            
-            notification = NSUserNotification.alloc().init()
-            notification.setTitle_('Transcription Complete')
-            notification.setSubtitle_('Audio note has been created')
-            notification.setInformativeText_(f'Saved as {markdown_filename}')
-            
-            center = NSUserNotificationCenter.defaultUserNotificationCenter()
-            center.deliverNotification_(notification)
+            self._show_notification('Transcription Complete', 
+                                'Audio note has been created',
+                                f'Saved as {markdown_filename}')
             
         except Exception as e:
-            # Show error notification
-            notification = NSUserNotification.alloc().init()
-            notification.setTitle_('Error')
-            notification.setSubtitle_('Failed to process recording')
-            notification.setInformativeText_(str(e))
-            
-            center = NSUserNotificationCenter.defaultUserNotificationCenter()
-            center.deliverNotification_(notification)
+            self._show_notification('Error',
+                                'Failed to process recording',
+                                str(e))
+
+    @objc.python_method
+    def _show_notification(self, title, subtitle, message):
+        notification = NSUserNotification.alloc().init()
+        notification.setTitle_(title)
+        notification.setSubtitle_(subtitle)
+        notification.setInformativeText_(message)
+        
+        NSUserNotificationCenter.defaultUserNotificationCenter().deliverNotification_(notification)
 
 def main():
     app = NSApplication.sharedApplication()
-    status_bar = StatusBarController.alloc().init()
+    delegate = AppDelegate.alloc().init()
+    app.setDelegate_(delegate)
     app.run()
 
 if __name__ == "__main__":
