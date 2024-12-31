@@ -1,5 +1,4 @@
-from Foundation import *
-from AppKit import *
+from Cocoa import NSStatusBar, NSVariableStatusItemLength, NSApplication, NSObject, NSMenu, NSMenuItem
 import objc
 import subprocess
 import os
@@ -26,6 +25,7 @@ class AppDelegate(NSObject):
             return None
 
         try:
+            NSApplication.sharedApplication()
             # Create a basic status item
             print("3. Getting system status bar...")
             statusbar = NSStatusBar.systemStatusBar()
