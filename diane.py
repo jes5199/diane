@@ -15,10 +15,10 @@ class AudioRecorderApp(rumps.App):
         self.obsidian_vault = os.path.expanduser("~/Documents/ObsidianVault")  # Change this to your vault path
         
         # Add menu items
-        # Create menu item with keyboard shortcut
-        self.record_item = rumps.MenuItem("Toggle Recording", callback=self.toggle_recording)
-        self.record_item.key = 'D'  # Capital D for shift+d
-        self.menu = [self.record_item]
+        # Create menu with keyboard shortcut
+        self.menu = [
+            rumps.MenuItem("Toggle Recording (⌘⇧D)", key='D', callback=self.toggle_recording)
+        ]
         
         # Initialize OpenAI client
         self.client = OpenAI()  # Will use OPENAI_API_KEY environment variable
