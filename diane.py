@@ -149,11 +149,11 @@ class AppDelegate(NSObject):
                     file=f
                 )
 
-            now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-            md_fn = f"audio_note_{now_str}.md"
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            md_fn = f"audio note {now_str}.md"
             md_path = os.path.join(self.obsidian_vault, md_fn)
             with open(md_path, "w") as md:
-                md.write(f"# Audio Note {now_str}\n{transcription.text}\n---\n")
+                md.write(f"{transcription.text}")
 
             print(f"Saved transcription to {md_fn}")
         except Exception as e:
