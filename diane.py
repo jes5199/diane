@@ -5,7 +5,6 @@ from datetime import datetime
 import threading
 from openai import OpenAI
 from pathlib import Path
-from pynput import keyboard
 
 class AudioRecorderApp(rumps.App):
     def __init__(self):
@@ -15,6 +14,11 @@ class AudioRecorderApp(rumps.App):
         self.output_dir = os.path.expanduser("~/Documents/AudioNotes")
         self.obsidian_vault = os.path.expanduser("~/Documents/ObsidianVault")  # Change this to your vault path
         
+        # Add menu items
+        self.menu = [
+            rumps.MenuItem("Toggle Recording", callback=self.toggle_recording, key='d', modifier=3),  # 3 is Cmd+Shift
+        ]
+        
         # Initialize OpenAI client
         self.client = OpenAI()  # Will use OPENAI_API_KEY environment variable
         
@@ -23,14 +27,7 @@ class AudioRecorderApp(rumps.App):
             if not os.path.exists(directory):
                 os.makedirs(directory)
 
-        # Set up keyboard listener
-        self.listener = keyboard.GlobalHotKeys({
-            '<cmd>+<shift>+d': self.toggle_recording
-        })
-        self.listener.start()
-
-    @rumps.clicked("Toggle Recording")
-    def toggle_recording(self, _=None):  # Make _ optional for keyboard callback
+    def toggle_recording(self, _):
         if not self.recording:
             self.start_recording()
         else:
