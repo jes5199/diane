@@ -27,9 +27,9 @@ async def realtime_demo():
     # Create an AsyncOpenAI client
     client = AsyncOpenAI()
 
-    # 1. Connect to the Realtime endpoint with a model
-    #    In the example, they used `gpt-4o-realtime-preview-2024-10-01`.
-    #    This might change over time. Check the docs for current model names.
+    # Initialize transcript accumulator at the start
+    acc_text = {}
+
     async with client.beta.realtime.connect(model="gpt-4o-realtime-preview-2024-10-01") as conn:
         print("Connected to Realtime API. Creating session...")
 
@@ -47,8 +47,6 @@ async def realtime_demo():
         # 3. Listen for events from the server (transcripts, audio deltas, etc.)
         #    We simply print partial text transcripts. 
         #    If there's TTS audio, you could decode & play it here as well.
-        acc_text = {}
-
         async for event in conn:
             event_type = event.type
 
@@ -60,7 +58,7 @@ async def realtime_demo():
                 pass
 
             elif event_type == "response.audio_transcript.delta":
-                # This event has partial text from the transcription (or GPT's text).
+                # Accumulate partial text from the transcription
                 item_id = event.item_id
                 delta_text = event.delta
 
@@ -69,15 +67,18 @@ async def realtime_demo():
                 else:
                     acc_text[item_id] += delta_text
 
-                # Clear screen line or just print partial transcript
+                # Clear screen line and print partial transcript
                 sys.stdout.write(f"\rPartial transcript: {acc_text[item_id]}")
                 sys.stdout.flush()
 
             elif event_type == "response.audio_transcript.done":
-                # Final transcript or chunk is complete
+                # Get the final accumulated transcript for this item_id
                 item_id = event.item_id
-                final_text = event.text
+                final_text = acc_text.get(item_id, "")
                 print(f"\n[Final transcript] {final_text}")
+                
+                # Clean up the accumulated text for this item
+                acc_text.pop(item_id, None)
 
             elif event_type == "response.audio.delta":
                 # This is TTS audio. You’d decode & queue for playback if desired
