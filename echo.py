@@ -1,11 +1,11 @@
 import asyncio
 import base64
 import sys
-import time
 import numpy as np
 import sounddevice as sd
 from openai import AsyncOpenAI
 from hybrid_filter import HybridFilter
+import json
 
 # Audio settings
 INPUT_SAMPLE_RATE = 16000
@@ -16,20 +16,34 @@ OUTPUT_SAMPLE_RATE = 24000
 OUTPUT_CHANNELS = 1
 OUTPUT_DTYPE = "int16"
 
+# Add this near the top of the file, after imports
+def calculator(operation, a, b):
+    """Calculator function that matches the tool definition"""
+    if operation == "add":
+        return a + b
+    elif operation == "subtract":
+        return a - b
+    elif operation == "multiply":
+        return a * b
+    elif operation == "divide":
+        return a / b if b != 0 else "Error: Division by zero"
+
+# Add this before the realtime_demo function
+FUNCTION_REGISTRY = {
+    "calculator": calculator
+}
+
 class AudioProcessor:
     def __init__(self):
         self.filter = HybridFilter(filter_length=96)
         self.output_buffer = np.array([], dtype=np.float32)
         self.output_lock = asyncio.Lock()
-        self.samples_processed = 0
-        self.last_reset = time.time()
+        self.is_speaking = False  # Track if assistant is speaking
         
     def reset_state(self):
-        """Reset the filter state when switching between listening/speaking"""
+        """Reset the filter state"""
         self.filter.reset()
         self.output_buffer = np.array([], dtype=np.float32)
-        self.samples_processed = 0
-        self.last_reset = time.time()
         
     async def process_output(self, raw_audio):
         async with self.output_lock:
@@ -39,25 +53,18 @@ class AudioProcessor:
                 self.output_buffer = self.output_buffer[-4096:]
             
     def process_input(self, input_data):
+        # Just boost volume if assistant isn't speaking
+        if not self.is_speaking:
+            return np.clip(input_data * 1.5, -32768, 32767).astype(np.int16)
+            
+        # Apply echo cancellation only when assistant is speaking
         input_float = input_data.astype(np.float32)
-        self.samples_processed += len(input_float)
-        
-        # Check if we need to reset
-        current_time = time.time()
-        if (self.samples_processed > INPUT_SAMPLE_RATE * 2 or  # Reset every 2 seconds
-            current_time - self.last_reset > 3):               # Or after 3 seconds real time
-            self.reset_state()
-        
         if len(self.output_buffer) >= len(input_float):
-            # Get reference signal
             reference = self.output_buffer[-len(input_float):]
-            
-            # Process through hybrid filter
             processed_data = self.filter.process(input_float, reference)
-            
-            return processed_data.astype(np.int16)
+            return np.clip(processed_data * 1.5, -32768, 32767).astype(np.int16)
         
-        return input_data
+        return np.clip(input_data * 1.5, -32768, 32767).astype(np.int16)
 
 async def realtime_demo():
     client = AsyncOpenAI()
@@ -100,7 +107,7 @@ async def realtime_demo():
     async with client.beta.realtime.connect(
         model="gpt-4o-realtime-preview",
     ) as conn:
-        print("Connected to Realtime. Setting up hybrid echo cancellation...")
+        print("Connected to Realtime. Setting up conditional echo cancellation...")
         await conn.session.update(session={
             "turn_detection": {"type": "server_vad"},
             "voice": "alloy"
@@ -109,7 +116,7 @@ async def realtime_demo():
         playback_task = asyncio.create_task(playback_audio())
         mic_task = asyncio.create_task(stream_microphone(conn))
 
-        print("Now streaming with hybrid echo cancellation. Speak, pause, and wait for response.\n")
+        print("Now streaming. Speak, pause, and wait for response.\n")
 
         acc_text = {}
         try:
@@ -126,14 +133,55 @@ async def realtime_demo():
                     acc_text.pop(item_id, None)
                     
                 elif event.type == "response.audio.delta":
+                    # Assistant is starting to speak
+                    audio_processor.is_speaking = True
                     raw_audio = base64.b64decode(event.delta)
                     await playback_queue.put(raw_audio)
-                    audio_processor.reset_state()
                     
                 elif event.type == "response.done":
+                    # Check if response contains function calls
+                    if hasattr(event, 'response') and event.response.output:
+                        for item in event.response.output:
+                            if item.type == "function_call":
+                                print(f"\n[Function Call] {item.name}")
+                                args = json.loads(item.arguments)
+                                print(f"Arguments: {json.dumps(args, indent=2)}")
+                                
+                                # Execute the function if it exists in the registry
+                                if item.name in FUNCTION_REGISTRY:
+                                    try:
+                                        result = FUNCTION_REGISTRY[item.name](**args)
+                                        print(f"Result: {result}")
+                                        
+                                        # Send the result back to the model
+                                        await conn.conversation.item.create(item={
+                                            "type": "function_call_output",
+                                            "call_id": item.call_id,
+                                            "output": json.dumps({"result": result})
+                                        })
+                                        
+                                    except Exception as e:
+                                        print(f"Error executing function: {e}")
+                                        # Send error back to the model
+                                        await conn.conversation.item.create(item={
+                                            "type": "function_call_output",
+                                            "call_id": item.call_id,
+                                            "output": json.dumps({"error": str(e)})
+                                        })
+                                else:
+                                    print(f"Unknown function: {item.name}")
+                                    # Send error for unknown function
+                                    await conn.conversation.item.create(item={
+                                        "type": "function_call_output",
+                                        "call_id": item.call_id,
+                                        "output": json.dumps({
+                                            "error": f"Unknown function: {item.name}"
+                                        })
+                                    })
+                                
                     print("\n[Assistant finished responding]\n")
                     audio_processor.reset_state()
-                    
+
         finally:
             mic_task.cancel()
             playback_task.cancel()
