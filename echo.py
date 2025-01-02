@@ -8,7 +8,7 @@ from hybrid_filter import HybridFilter
 import json
 
 # Audio settings
-INPUT_SAMPLE_RATE = 16000
+INPUT_SAMPLE_RATE = 24000
 INPUT_CHANNELS = 1
 READ_SIZE_SEC = 0.02
 READ_SIZE_FRAMES = int(INPUT_SAMPLE_RATE * READ_SIZE_SEC)
@@ -108,6 +108,7 @@ async def realtime_demo():
 
     async with client.beta.realtime.connect(
         model="gpt-4o-mini-realtime-preview-2024-12-17",
+        #model="gpt-4o-realtime-preview-2024-12-17",
     ) as conn:
         print("Connected to Realtime. Setting up conditional echo cancellation...")
 
@@ -137,6 +138,7 @@ async def realtime_demo():
             "input_audio_transcription": {
                 "model": "whisper-1"
             },
+            "temperature": 0.6,
         })
 
         playback_task = asyncio.create_task(playback_audio())
@@ -248,8 +250,8 @@ async def realtime_demo():
                         print(f"- {limit.name}: {limit.remaining}/{limit.limit} remaining "
                               f"(resets in {limit.reset_seconds:.1f}s)")
                 else:
-                    print(f"Unknown event type: {event.type}")
-                    print(f"Event: {event}")
+                    print(f"{event.type}")
+                    print(f"{event}")
 
         finally:
             mic_task.cancel()
