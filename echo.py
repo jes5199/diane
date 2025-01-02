@@ -145,7 +145,7 @@ async def realtime_demo():
                 if event.type == "response.audio_transcript.delta":
                     item_id = event.item_id
                     acc_text[item_id] = acc_text.get(item_id, "") + event.delta
-                    #sys.stdout.write(f"\rPartial transcript: {acc_text[item_id]}")
+                    sys.stdout.write(f"{event.delta}")
                     sys.stdout.flush()
                     
                 elif event.type == "response.audio_transcript.done":
