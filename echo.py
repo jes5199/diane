@@ -53,6 +53,7 @@ class AudioProcessor:
                 self.output_buffer = self.output_buffer[-4096:]
             
     def process_input(self, input_data):
+        return input_data
         # Just boost volume if assistant isn't speaking
         if not self.is_speaking:
             return np.clip(input_data * 1.5, -32768, 32767).astype(np.int16)
@@ -108,9 +109,29 @@ async def realtime_demo():
         model="gpt-4o-realtime-preview",
     ) as conn:
         print("Connected to Realtime. Setting up conditional echo cancellation...")
+
+        tools = [
+            {
+                "type": "function",
+                "name": "calculator",
+                "description": "A calculator that can add, subtract, multiply, and divide",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "operation": {"type": "string"},
+                        "a": {"type": "number"},
+                        "b": {"type": "number"}
+                    },
+                    "required": ["operation", "a", "b"]
+                },
+            }
+        ]
+
         await conn.session.update(session={
             "turn_detection": {"type": "server_vad"},
-            "voice": "alloy"
+            "voice": "alloy",
+            "tools": tools,
+            "tool_choice": "auto",
         })
 
         playback_task = asyncio.create_task(playback_audio())
@@ -124,7 +145,7 @@ async def realtime_demo():
                 if event.type == "response.audio_transcript.delta":
                     item_id = event.item_id
                     acc_text[item_id] = acc_text.get(item_id, "") + event.delta
-                    sys.stdout.write(f"\rPartial transcript: {acc_text[item_id]}")
+                    #sys.stdout.write(f"\rPartial transcript: {acc_text[item_id]}")
                     sys.stdout.flush()
                     
                 elif event.type == "response.audio_transcript.done":
@@ -181,6 +202,9 @@ async def realtime_demo():
                                 
                     print("\n[Assistant finished responding]\n")
                     audio_processor.reset_state()
+                else:
+                    print(f"Unknown event type: {event.type}")
+                    print(f"Event: {event}")
 
         finally:
             mic_task.cancel()
