@@ -3,6 +3,7 @@ import base64
 import sys
 import openai
 import sounddevice as sd
+import numpy as np
 
 from openai import AsyncOpenAI
 from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
@@ -17,6 +18,7 @@ READ_SIZE_FRAMES = int(INPUT_SAMPLE_RATE * READ_SIZE_SEC)
 OUTPUT_SAMPLE_RATE = 16000
 OUTPUT_CHANNELS = 1
 OUTPUT_DTYPE = "int16"
+
 
 
 async def realtime_demo():
@@ -114,7 +116,12 @@ async def playback_audio(playback_queue: asyncio.Queue):
                 chunk = await playback_queue.get()
                 if chunk is None:
                     continue
-                out_stream.write(chunk)
+                
+                # Convert raw bytes to int16 NumPy array
+                np_chunk = np.frombuffer(chunk, dtype=np.int16)
+                
+                # Write the NumPy array to the output stream
+                out_stream.write(np_chunk)
         except asyncio.CancelledError:
             pass
 
