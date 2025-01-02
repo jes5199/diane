@@ -241,6 +241,12 @@ async def realtime_demo():
                                 
                     print("\n[Assistant finished responding]\n")
                     audio_processor.reset_state()
+                elif event.type == "rate_limits.updated":
+                    # Print rate limit information in a readable format
+                    print("\n[Rate Limits]")
+                    for limit in event.rate_limits:
+                        print(f"- {limit.name}: {limit.remaining}/{limit.limit} remaining "
+                              f"(resets in {limit.reset_seconds:.1f}s)")
                 else:
                     print(f"Unknown event type: {event.type}")
                     print(f"Event: {event}")
