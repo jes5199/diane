@@ -9,25 +9,31 @@ from openai import AsyncOpenAI
 from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
 
 # Audio settings
-SAMPLE_RATE = 16000
-CHANNELS = 1
+INPUT_SAMPLE_RATE = 16000
+INPUT_CHANNELS = 1
 READ_SIZE_SEC = 0.02  # read 20 ms at a time
-READ_SIZE_FRAMES = int(SAMPLE_RATE * READ_SIZE_SEC)
+READ_SIZE_FRAMES = int(INPUT_SAMPLE_RATE * READ_SIZE_SEC)
+
+# New output audio settings
+OUTPUT_SAMPLE_RATE = 16000  # TTS audio sample rate
+OUTPUT_CHANNELS = 1
+OUTPUT_DTYPE = 'int16'
 
 #openai.api_key = "YOUR_OPENAI_API_KEY_HERE"
 
 async def realtime_demo():
     """
-    Minimal console-based realtime voice example:
-      1) Connect to the Realtime endpoint
-      2) Stream microphone audio in
-      3) Print partial transcripts / text as they arrive
+    Streams microphone audio to Realtime and plays back TTS audio to your speakers.
     """
-
-    # Create an AsyncOpenAI client
     client = AsyncOpenAI()
 
-    # Initialize transcript accumulator at the start
+    # Create a queue for TTS audio playback
+    playback_queue = asyncio.Queue()
+    
+    # Start a background playback task
+    playback_task = asyncio.create_task(playback_audio(playback_queue))
+
+    # Initialize transcript accumulator
     acc_text = {}
 
     async with client.beta.realtime.connect(model="gpt-4o-realtime-preview-2024-10-01") as conn:
@@ -40,7 +46,7 @@ async def realtime_demo():
         
         # 2. Fire off a background task to read from your microphone
         #    and append audio to the input_audio_buffer
-        audio_task = asyncio.create_task(stream_microphone(conn))
+        mic_task = asyncio.create_task(stream_microphone(conn))
 
         print("Now listening for server events (transcripts/responses). Press Ctrl+C to stop.\n")
 
@@ -81,22 +87,46 @@ async def realtime_demo():
                 acc_text.pop(item_id, None)
 
             elif event_type == "response.audio.delta":
-                # This is TTS audio. You’d decode & queue for playback if desired
+                # Decode TTS audio and queue for playback
                 raw_audio = base64.b64decode(event.delta)
-                # e.g. pass raw_audio to pyaudio or sounddevice playback
-                pass
+                await playback_queue.put(raw_audio)
 
             # Other events might include "response.text.delta" (if you’re also getting textual output),
             # "response.done", etc.
             # Check the Realtime docs for more event types & usage.
 
-        # If we ever exit the loop, stop reading from the microphone
-        audio_task.cancel()
+        # Cancel both mic and playback tasks on exit
+        mic_task.cancel()
+        playback_task.cancel()
         try:
-            await audio_task
+            await mic_task
+            await playback_task
         except asyncio.CancelledError:
             pass
 
+async def playback_audio(playback_queue: asyncio.Queue):
+    """
+    Continuously read raw audio chunks from playback_queue and play them out the speakers.
+    """
+    print("Setting up audio output...")
+
+    with sd.OutputStream(
+        samplerate=OUTPUT_SAMPLE_RATE,
+        channels=OUTPUT_CHANNELS,
+        dtype=OUTPUT_DTYPE,
+        blocksize=1024,
+    ) as out_stream:
+        try:
+            while True:
+                # Get the next chunk from the queue
+                chunk = await playback_queue.get()
+                if chunk is None:
+                    continue
+
+                # Write raw bytes to the speaker
+                out_stream.write(chunk)
+        except asyncio.CancelledError:
+            pass
 
 async def stream_microphone(conn: AsyncRealtimeConnection):
     """
@@ -105,9 +135,11 @@ async def stream_microphone(conn: AsyncRealtimeConnection):
     """
     print("Opening microphone stream...")
 
-    # Start input stream using sounddevice
-    # (You might need to check your default device or specify device=... if it fails)
-    with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='int16') as stream:
+    with sd.InputStream(
+        samplerate=INPUT_SAMPLE_RATE, 
+        channels=INPUT_CHANNELS, 
+        dtype='int16'
+    ) as stream:
         try:
             while True:
                 # Only attempt to read if we have enough frames
