@@ -53,6 +53,7 @@ class AudioProcessor:
                 self.output_buffer = self.output_buffer[-4096:]
             
     def process_input(self, input_data):
+        #return np.clip(input_data * 1.5, -32768, 32767).astype(np.int16)
         return input_data
         # Just boost volume if assistant isn't speaking
         if not self.is_speaking:
@@ -106,7 +107,7 @@ async def realtime_demo():
                 await asyncio.sleep(0)
 
     async with client.beta.realtime.connect(
-        model="gpt-4o-realtime-preview-2024-10-01",
+        model="gpt-4o-mini-realtime-preview-2024-12-17",
     ) as conn:
         print("Connected to Realtime. Setting up conditional echo cancellation...")
 
@@ -118,7 +119,7 @@ async def realtime_demo():
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "operation": {"type": "string"},
+                        "operation": {"type": "string", "enum": ["add", "subtract", "multiply", "divide"]},
                         "a": {"type": "number"},
                         "b": {"type": "number"}
                     },
@@ -130,9 +131,12 @@ async def realtime_demo():
         await conn.session.update(session={
             "turn_detection": {"type": "server_vad"},
             "modalities": ["text", "audio"],
-            #"voice": "alloy",
+            "voice": "alloy",
             "tools": tools,
             "tool_choice": "auto",
+            "input_audio_transcription": {
+                "model": "whisper-1"
+            },
         })
 
         playback_task = asyncio.create_task(playback_audio())
@@ -160,10 +164,38 @@ async def realtime_demo():
                     raw_audio = base64.b64decode(event.delta)
                     await playback_queue.put(raw_audio)
                     
+                elif event.type == "conversation.item.input_audio_transcription.completed":
+                    # Print the transcribed user input
+                    print(f"\n[User transcript] {event.transcript}")
+                    
+                elif event.type == "response.content_part.added":
+                    pass
+                elif event.type == "response.content_part.done":
+                    pass
+                elif event.type == "response.output_item.done":
+                    pass
+                elif event.type == "conversation.item.created":
+                    pass
+                elif event.type == "response.output_item.added":
+                    pass
+                elif event.type == "response.function_call_arguments.delta":
+                    pass
+                elif event.type == "response.function_call_arguments.done":
+                    pass
+                elif event.type == "input_audio_buffer.committed":
+                    pass
+                elif event.type == "response.created":
+                    pass
+                elif event.type == "input_audio_buffer.speech_started":
+                    print("listening")
+                elif event.type == "input_audio_buffer.speech_stopped":
+                    print("ok")
+                elif event.type == "response.audio.done":
+                    pass
                 elif event.type == "response.done":
                     # Check if response contains function calls
                     if hasattr(event, 'response') and event.response.output:
-                        print(f"Response: {event.response.output}")
+                        #print(f"Response: {event.response.output}")
                         for item in event.response.output:
                             if item.type == "function_call":
                                 print(f"\n[Function Call] {item.name}")
@@ -181,6 +213,11 @@ async def realtime_demo():
                                             "type": "function_call_output",
                                             "call_id": item.call_id,
                                             "output": json.dumps({"result": result})
+                                        })
+
+                                        # then send a text message to the model
+                                        await conn.response.create(response={
+                                            "instructions": "read the result",
                                         })
                                         
                                     except Exception as e:
