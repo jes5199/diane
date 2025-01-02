@@ -15,12 +15,15 @@ OUTPUT_CHANNELS = 1
 OUTPUT_DTYPE = "int16"
 
 class NLMSFilter:
-    def __init__(self, filter_length=4096, step_size=0.1, epsilon=1e-6):
+    def __init__(self, filter_length=4096, step_size=0.5, epsilon=1e-6):
         self.filter_length = filter_length
         self.step_size = step_size
         self.epsilon = epsilon
         self.weights = np.zeros(filter_length)
         self.reference_buffer = np.zeros(filter_length)
+        # Add energy thresholding
+        self.energy_threshold = 500  # Adjust based on your setup
+        self.last_error = 0
         
     def update(self, reference_sample, input_sample):
         # Update reference buffer
@@ -33,9 +36,22 @@ class NLMSFilter:
         # Calculate error
         error = input_sample - y
         
-        # Update filter weights
+        # Energy-based gating
+        signal_energy = np.sum(self.reference_buffer**2)
+        if signal_energy < self.energy_threshold:
+            error = 0  # Suppress output when energy is low
+            
+        # Smoothing
+        error = 0.7 * error + 0.3 * self.last_error
+        self.last_error = error
+        
+        # Update filter weights with more aggressive adaptation
         norm = np.dot(self.reference_buffer, self.reference_buffer) + self.epsilon
         self.weights += self.step_size * error * self.reference_buffer / norm
+        
+        # Apply additional noise gate
+        if abs(error) < 100:  # Adjust threshold as needed
+            error = 0
         
         return error
 
@@ -104,7 +120,11 @@ async def realtime_demo():
                 # Apply echo cancellation
                 processed_data = audio_processor.process_input(data.flatten())
                 # Convert back to bytes and base64 encode
-                processed_bytes = processed_data.astype(np.int16).tobytes()
+                # Add gain control and additional noise suppression
+            processed_data = np.clip(processed_data * 1.5, -32768, 32767)  # Adjust gain
+            noise_gate = np.abs(processed_data) > 500
+            processed_data = processed_data * noise_gate
+            processed_bytes = processed_data.astype(np.int16).tobytes()
                 b64_chunk = base64.b64encode(processed_bytes).decode("utf-8")
                 await conn.input_audio_buffer.append(audio=b64_chunk)
 
