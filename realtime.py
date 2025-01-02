@@ -39,13 +39,13 @@ async def realtime_demo():
     async with client.beta.realtime.connect(model="gpt-4o-realtime-preview-2024-10-01") as conn:
         print("Connected to Realtime API. Creating session...")
 
-        # Optional: Turn detection approach
-        #   "turn_detection": {"type": "server_vad"} (server does voice-activity detection)
-        # or you can set it to None to handle “push-to-talk” manually.
-        await conn.session.update(session={"turn_detection": {"type": "server_vad"}})
+        # Set up server VAD and enable TTS output
+        await conn.session.update(session={
+            "turn_detection": {"type": "server_vad"},
+            "output_modality": "audio"  # Enable TTS responses
+        })
         
-        # 2. Fire off a background task to read from your microphone
-        #    and append audio to the input_audio_buffer
+        # Start mic streaming in background
         mic_task = asyncio.create_task(stream_microphone(conn))
 
         print("Now listening for server events (transcripts/responses). Press Ctrl+C to stop.\n")
