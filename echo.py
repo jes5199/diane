@@ -106,7 +106,7 @@ async def realtime_demo():
                 await asyncio.sleep(0)
 
     async with client.beta.realtime.connect(
-        model="gpt-4o-realtime-preview",
+        model="gpt-4o-realtime-preview-2024-10-01",
     ) as conn:
         print("Connected to Realtime. Setting up conditional echo cancellation...")
 
@@ -129,7 +129,8 @@ async def realtime_demo():
 
         await conn.session.update(session={
             "turn_detection": {"type": "server_vad"},
-            "voice": "alloy",
+            "modalities": ["text", "audio"],
+            #"voice": "alloy",
             "tools": tools,
             "tool_choice": "auto",
         })
@@ -162,6 +163,7 @@ async def realtime_demo():
                 elif event.type == "response.done":
                     # Check if response contains function calls
                     if hasattr(event, 'response') and event.response.output:
+                        print(f"Response: {event.response.output}")
                         for item in event.response.output:
                             if item.type == "function_call":
                                 print(f"\n[Function Call] {item.name}")
